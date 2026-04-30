@@ -1,0 +1,53 @@
+#!/bin/sh
+# s6 service: gost proxy
+#
+# Boot behavior:
+#   1. If /config/gost.yml exists, use it verbatim (advanced users).
+#   2. Otherwise, auto-generate a minimal SOCKS5 + HTTP proxy using
+#      GOST_SOCKS_PORT / GOST_HTTP_PORT env vars and pass it via CLI.
+#
+# We wait for the corplink tun interface to appear before starting gost so
+# that outbound traffic goes through the VPN tunnel.
+
+set -e
+
+# Wait for the corplink tun interface so the proxy immediately egresses via VPN.
+# We match any interface starting with "corplink" or "utun".
+wait_for_tun() {
+    tries=0
+    while [ "$tries" -lt 60 ]; do
+        if ip link show 2>/dev/null | grep -qE '(^| )(corplink|utun|wg)[^ ]*:'; then
+            return 0
+        fi
+        tries=$((tries + 1))
+        sleep 2
+    done
+    echo "[gost] warn: no corplink/wg tun interface appeared after 120s, starting anyway"
+}
+
+wait_for_tun
+
+cd /tmp
+rm -rf gost && mkdir -p gost && cd gost
+
+if [ -e /config/gost.yml ]; then
+    echo "[gost] using /config/gost.yml"
+    exec /app/gost -C /config/gost.yml
+fi
+
+SOCKS_PORT="${GOST_SOCKS_PORT:-1080}"
+HTTP_PORT="${GOST_HTTP_PORT:-8080}"
+
+echo "[gost] auto-config: SOCKS5 on :$SOCKS_PORT, HTTP on :$HTTP_PORT"
+
+# -L = listen.  Passing two -L flags starts both listeners in one process.
+# Auth: GOST_USER / GOST_PASS env vars (optional; empty = anonymous).
+if [ -n "$GOST_USER" ] && [ -n "$GOST_PASS" ]; then
+    SOCKS_URL="socks5://${GOST_USER}:${GOST_PASS}@:${SOCKS_PORT}"
+    HTTP_URL="http://${GOST_USER}:${GOST_PASS}@:${HTTP_PORT}"
+else
+    SOCKS_URL="socks5://:${SOCKS_PORT}"
+    HTTP_URL="http://:${HTTP_PORT}"
+fi
+
+exec /app/gost -L "$SOCKS_URL" -L "$HTTP_URL"

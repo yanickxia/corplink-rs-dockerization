@@ -1,0 +1,20 @@
+{
+  "_comment": "Rename this file to config.json and mount the containing dir at /config.",
+
+  "company_name": "your-company-code",
+  "username": "your_username",
+  "password": "your_password",
+
+  "platform": "ldap",
+
+  "device_name": "corplink-docker",
+  "interface_name": "corplink",
+
+  "auto_setup_routes": true,
+  "route_mode": "split",
+
+  "_vpn_server_name_hint": "Pin to a specific server name, optional.",
+
+  "_example_full_tunnel_comment": "For a full-tunnel gateway setup, prefer route_mode: full + auto_setup_routes: false and let gost / iptables do the egress.",
+  "vpn_disallowed_routes": ["192.168.0.0/16", "10.0.0.0/8"]
+}

@@ -1,0 +1,15 @@
+#!/bin/sh
+# s6 service: corplink-rs
+# Config is mounted at /config/config.json.
+# If /config/config.json does not exist, we wait for it so the container
+# doesn't crash-loop when the user is still preparing the config.
+
+set -e
+
+CONFFILE=/config/config.json
+while [ ! -e "$CONFFILE" ]; do
+    echo "[corplink] waiting for $CONFFILE ..."
+    sleep 5
+done
+
+exec /app/corplink-rs "$CONFFILE"

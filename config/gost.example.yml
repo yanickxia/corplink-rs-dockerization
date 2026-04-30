@@ -1,0 +1,33 @@
+# Advanced gost configuration example.
+#
+# This file is OPTIONAL. If you don't mount it, the container auto-generates
+# a SOCKS5 + HTTP listener from GOST_SOCKS_PORT / GOST_HTTP_PORT.
+#
+# Drop this file at /config/gost.yml (i.e. next to config.json) to override.
+# Reference: https://gost.run/en/concepts/
+
+services:
+  - name: socks5
+    addr: ":1080"
+    handler:
+      type: socks5
+      # To require auth, uncomment and set creds:
+      # auth:
+      #   username: user
+      #   password: pass
+    listener:
+      type: tcp
+
+  - name: http
+    addr: ":8080"
+    handler:
+      type: http
+      # auth:
+      #   username: user
+      #   password: pass
+    listener:
+      type: tcp
+
+log:
+  level: info
+  format: text

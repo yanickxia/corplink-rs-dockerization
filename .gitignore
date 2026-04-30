@@ -1,0 +1,7 @@
+.env
+*.tar.gz
+*.log
+config/config.json
+config/gost.yml
+config/cookies.json
+.DS_Store

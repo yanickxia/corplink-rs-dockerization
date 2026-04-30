@@ -1,0 +1,297 @@
+name: build-and-push
+
+on:
+  # Poll upstream every 6 hours for new master commits / new tags.
+  schedule:
+    - cron: '0 */6 * * *'
+
+  # Run on pushes to our own master (e.g. when Dockerfile / CI is tweaked).
+  push:
+    branches: [master, main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+  # Manual trigger: optionally force a rebuild even if upstream hasn't moved.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force rebuild even if upstream unchanged'
+        required: false
+        default: 'false'
+      ref:
+        description: 'Upstream ref to build (branch, tag or commit SHA). Empty = auto.'
+        required: false
+        default: ''
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # to create tags / releases on this repo
+  packages: write        # to push to ghcr.io
+  actions: read
+
+env:
+  UPSTREAM_REPO: PinkD/corplink-rs
+  IMAGE_NAME: ${{ github.repository }}   # e.g. yanickxia/corplink-rs-dockerization
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Step 1: figure out whether there's anything new on upstream master / tags.
+  # Publishes three outputs consumed by the build jobs:
+  #   - should_build           : "true" | "false"
+  #   - upstream_sha           : commit SHA to build
+  #   - upstream_tag           : "" if this is a master build, else the tag name
+  # ---------------------------------------------------------------------------
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      upstream_sha: ${{ steps.decide.outputs.upstream_sha }}
+      upstream_ref: ${{ steps.decide.outputs.upstream_ref }}
+      upstream_tag: ${{ steps.decide.outputs.upstream_tag }}
+      short_sha:    ${{ steps.decide.outputs.short_sha }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Query upstream master + latest tag
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_FORCE: ${{ inputs.force }}
+          INPUT_REF:   ${{ inputs.ref }}
+          EVENT_NAME:  ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          api() {
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$@"
+          }
+
+          # Current upstream master SHA
+          master_sha="$(api "https://api.github.com/repos/${UPSTREAM_REPO}/commits/master" | jq -r .sha)"
+          short="${master_sha:0:7}"
+          echo "upstream master = $master_sha"
+
+          # Latest upstream tag (may be absent)
+          latest_tag="$(api "https://api.github.com/repos/${UPSTREAM_REPO}/tags?per_page=1" | jq -r '.[0].name // empty')"
+          latest_tag_sha=""
+          if [ -n "$latest_tag" ]; then
+            latest_tag_sha="$(api "https://api.github.com/repos/${UPSTREAM_REPO}/git/ref/tags/${latest_tag}" | jq -r .object.sha || true)"
+          fi
+          echo "upstream latest tag = ${latest_tag:-<none>} ($latest_tag_sha)"
+
+          # Manual override
+          if [ -n "$INPUT_REF" ]; then
+            echo "manual ref requested: $INPUT_REF"
+            # If the manual ref looks like a tag name, try to resolve it
+            resolved=""
+            if resolved="$(api "https://api.github.com/repos/${UPSTREAM_REPO}/commits/${INPUT_REF}" | jq -r .sha)"; then
+              echo "upstream_sha=$resolved"   >> "$GITHUB_OUTPUT"
+              echo "short_sha=${resolved:0:7}" >> "$GITHUB_OUTPUT"
+              echo "upstream_ref=$INPUT_REF"   >> "$GITHUB_OUTPUT"
+              # If it exists as a tag on upstream, propagate it
+              if api "https://api.github.com/repos/${UPSTREAM_REPO}/git/ref/tags/${INPUT_REF}" >/dev/null 2>&1; then
+                echo "upstream_tag=$INPUT_REF" >> "$GITHUB_OUTPUT"
+              else
+                echo "upstream_tag=" >> "$GITHUB_OUTPUT"
+              fi
+              echo "should_build=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          # Detect whether we've already built this master SHA
+          # We persist the last-built SHA as a lightweight annotated git tag on
+          # THIS repo: "upstream-<short>".  Also handle upstream tags.
+          git fetch --tags origin || true
+
+          already_built_master="false"
+          if git rev-parse "refs/tags/upstream-${short}" >/dev/null 2>&1; then
+            already_built_master="true"
+          fi
+
+          tag_needs_build="false"
+          if [ -n "$latest_tag" ]; then
+            if ! git rev-parse "refs/tags/v${latest_tag}" >/dev/null 2>&1 \
+              && ! git rev-parse "refs/tags/${latest_tag}" >/dev/null 2>&1; then
+              tag_needs_build="true"
+            fi
+          fi
+
+          force="false"
+          if [ "$INPUT_FORCE" = "true" ] || [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            force="true"
+          fi
+
+          # Priority: build the tag if it's new, else master if new, else skip
+          if [ "$tag_needs_build" = "true" ]; then
+            echo "should_build=true"        >> "$GITHUB_OUTPUT"
+            echo "upstream_sha=$latest_tag_sha" >> "$GITHUB_OUTPUT"
+            echo "short_sha=${latest_tag_sha:0:7}" >> "$GITHUB_OUTPUT"
+            echo "upstream_ref=$latest_tag" >> "$GITHUB_OUTPUT"
+            echo "upstream_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          elif [ "$already_built_master" = "false" ] || [ "$force" = "true" ]; then
+            echo "should_build=true"        >> "$GITHUB_OUTPUT"
+            echo "upstream_sha=$master_sha" >> "$GITHUB_OUTPUT"
+            echo "short_sha=$short"         >> "$GITHUB_OUTPUT"
+            echo "upstream_ref=master"      >> "$GITHUB_OUTPUT"
+            echo "upstream_tag="            >> "$GITHUB_OUTPUT"
+          else
+            echo "nothing to do, upstream master ($short) already built and no new tag"
+            echo "should_build=false"       >> "$GITHUB_OUTPUT"
+            echo "upstream_sha=$master_sha" >> "$GITHUB_OUTPUT"
+            echo "short_sha=$short"         >> "$GITHUB_OUTPUT"
+            echo "upstream_ref=master"      >> "$GITHUB_OUTPUT"
+            echo "upstream_tag="            >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Step 2a: build the default (debian-slim) image for amd64 + arm64
+  # ---------------------------------------------------------------------------
+  build-default:
+    needs: detect
+    if: needs.detect.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        env:
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
+          SHORT:        ${{ needs.detect.outputs.short_sha }}
+        run: |
+          base="${REGISTRY}/${IMAGE_NAME}"
+          tags="${base}:latest"
+          tags="$tags,${base}:master-${SHORT}"
+          if [ -n "$UPSTREAM_TAG" ]; then
+            tags="$tags,${base}:${UPSTREAM_TAG}"
+            tags="$tags,${base}:v${UPSTREAM_TAG#v}"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (default / debian)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            CORPLINK_REF=${{ needs.detect.outputs.upstream_sha }}
+          cache-from: type=gha,scope=default
+          cache-to: type=gha,scope=default,mode=max
+          provenance: false
+
+  # ---------------------------------------------------------------------------
+  # Step 2b: build the slim router image (amd64 + arm64 + arm/v7)
+  # ---------------------------------------------------------------------------
+  build-router:
+    needs: detect
+    if: needs.detect.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        env:
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
+          SHORT:        ${{ needs.detect.outputs.short_sha }}
+        run: |
+          base="${REGISTRY}/${IMAGE_NAME}"
+          tags="${base}:latest-router"
+          tags="$tags,${base}:router"
+          tags="$tags,${base}:master-${SHORT}-router"
+          if [ -n "$UPSTREAM_TAG" ]; then
+            tags="$tags,${base}:${UPSTREAM_TAG}-router"
+            tags="$tags,${base}:v${UPSTREAM_TAG#v}-router"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (router / alpine)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.router
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            CORPLINK_REF=${{ needs.detect.outputs.upstream_sha }}
+          cache-from: type=gha,scope=router
+          cache-to: type=gha,scope=router,mode=max
+          provenance: false
+
+  # ---------------------------------------------------------------------------
+  # Step 3: record what we just built so the next scheduled run can skip it
+  # ---------------------------------------------------------------------------
+  record:
+    needs: [detect, build-default, build-router]
+    if: needs.detect.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag this repo with upstream commit + mirror upstream tag
+        env:
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
+          SHORT:        ${{ needs.detect.outputs.short_sha }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Always pin the upstream SHA we built
+          marker="upstream-${SHORT}"
+          if ! git rev-parse "refs/tags/${marker}" >/dev/null 2>&1; then
+            git tag -a "$marker" -m "Built upstream ${UPSTREAM_SHA}" HEAD
+            git push origin "$marker" || true
+          fi
+
+          # Mirror upstream tag onto our repo if present
+          if [ -n "$UPSTREAM_TAG" ]; then
+            for t in "$UPSTREAM_TAG" "v${UPSTREAM_TAG#v}"; do
+              if ! git rev-parse "refs/tags/${t}" >/dev/null 2>&1; then
+                git tag -a "$t" -m "Mirror of upstream ${UPSTREAM_REPO}@${UPSTREAM_TAG}" HEAD
+                git push origin "$t" || true
+              fi
+            done
+          fi

@@ -1,0 +1,26 @@
+services:
+  corplink:
+    image: ghcr.io/yanickxia/corplink-rs-dockerization:latest
+    # For routers / low-memory devices, switch to the slim image:
+    # image: ghcr.io/yanickxia/corplink-rs-dockerization:latest-router
+    container_name: corplink
+    hostname: corplink
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - GOST_SOCKS_PORT=1080
+      - GOST_HTTP_PORT=8080
+      # Optional proxy auth (leave empty to allow anonymous access):
+      # - GOST_USER=proxyuser
+      # - GOST_PASS=proxypass
+    volumes:
+      - ./config:/config
+    tmpfs:
+      - /tmp
+    devices:
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "1080:1080"   # SOCKS5
+      - "8080:8080"   # HTTP proxy
