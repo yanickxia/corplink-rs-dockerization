@@ -65,7 +65,25 @@ $EDITOR ./config/config.json
 
 ### 2. 启动容器
 
-#### 方式 A：docker run
+> ⚠️ **必须加 `-it`(或至少 `-i`)分配 stdin/TTY**
+> corplink-rs 第一次登录时(尤其 `platform=lark` / `bytedance_sso` 等需要扫码/点击授权的平台)会打印一个 URL,并**等你按回车**表示"我已经在手机/浏览器里完成授权了"。没有 stdin 就会立刻 EOF 退出、登录失败。
+>
+> 完成首次登录、cookie 落盘后,后续重启可以切回 `-d` 纯后台模式(cookie 还有效,不需要再交互)。
+
+#### 方式 A:docker run (首次登录 — 交互式)
+
+```bash
+docker run -it --rm \
+  --name corplink \
+  --device /dev/net/tun \
+  --cap-add NET_ADMIN \
+  -v "$PWD/config:/config" \
+  -p 1080:1080 \
+  -p 8080:8080 \
+  ghcr.io/yanickxia/corplink-rs-dockerization:latest
+```
+
+日志里会出现类似 `please scan the QR code or visit the following link to auth corplink:` 的提示,点开链接在手机/浏览器里完成扫码授权,**回到终端按一次回车**,corplink 就会拿到 cookie 落到 `./config/corplink_cookies.json`。此时可以 `Ctrl+C` 停掉,再用 `-d` 模式长期运行:
 
 ```bash
 docker run -d \
@@ -79,13 +97,23 @@ docker run -d \
   ghcr.io/yanickxia/corplink-rs-dockerization:latest
 ```
 
-#### 方式 B：docker compose（推荐）
+#### 方式 B:docker compose(推荐)
 
-仓库自带 [`docker-compose.yml`](./docker-compose.yml)，直接：
+仓库自带 [`docker-compose.yml`](./docker-compose.yml),已经打开了 `stdin_open: true` + `tty: true`,所以 compose 模式天然支持交互式登录。
+
+**首次登录**:
 
 ```bash
-docker compose up -d
+docker compose up      # 前台启动,扫码后按回车
+# 授权完成后 Ctrl+C 停掉
+docker compose up -d   # 之后就可以纯后台跑了
 docker compose logs -f
+```
+
+如果你在纯无头服务器上 `compose up -d` 直接起但 cookie 已失效,可以:
+
+```bash
+docker compose run --rm corplink   # 进入交互式完成登录,退出后再 up -d
 ```
 
 ### 3. 使用代理
@@ -110,6 +138,16 @@ curl -x socks5h://localhost:1080 ifconfig.me
 如果你想把它跑在家里的路由器（群晖、iStoreOS、OpenWRT on x86、GL.iNet ARMv7 等）上，用路由器镜像可以省一些内存和存储：
 
 ```bash
+# 首次登录(交互式)
+docker run -it --rm \
+  --name corplink \
+  --device /dev/net/tun \
+  --cap-add NET_ADMIN \
+  -v /root/corplink:/config \
+  -p 1080:1080 -p 8080:8080 \
+  ghcr.io/yanickxia/corplink-rs-dockerization:latest-router
+
+# 登录完成、cookie 落盘后,改为后台长跑
 docker run -d \
   --name corplink \
   --restart unless-stopped \
@@ -182,20 +220,21 @@ docker run -d \
 | `CORPLINK_AUTO_SETUP_ROUTES` | `auto_setup_routes` | bool |
 | `CORPLINK_VPN_DISALLOWED_ROUTES` | `vpn_disallowed_routes` | CSV → string[] |
 
-示例(纯 env 配置,不挂 config.json 也行,容器第一次启动会自动创建):
+示例(纯 env 配置,不挂 config.json 也行,容器第一次启动会自动创建)。**首次登录同样要 `-it`**:
 
 ```bash
-docker run -d \
+docker run -it --rm \
   --name corplink \
   --device /dev/net/tun --cap-add NET_ADMIN \
   -v "$PWD/config:/config" \
   -e CORPLINK_COMPANY_NAME=bytedance \
   -e CORPLINK_USERNAME=alice \
-  -e CORPLINK_PLATFORM=ldap \
+  -e CORPLINK_PLATFORM=lark \
   -e CORPLINK_ROUTE_MODE=full \
   -e CORPLINK_VPN_DISALLOWED_ROUTES=10.68.0.0/16 \
   -p 1080:1080 -p 8080:8080 \
   ghcr.io/yanickxia/corplink-rs-dockerization:latest
+# 扫码 + 回车 完成授权后 Ctrl+C 退出,换成 -d 后台跑(env 参数保持一致)
 ```
 
 ### 挂载点
@@ -286,7 +325,8 @@ docker buildx build \
 
 | 现象 | 解决 |
 |---|---|
-| 容器日志刷 `waiting for /config/config.json` | 没挂配置文件,请检查 `-v` 参数 |
+| 日志 `login failed: no available login method` 然后容器立刻退出 | 首次登录需要扫码后**按回车**确认,容器必须带 `-it`(或 compose 里配 `stdin_open: true` + `tty: true`)。详见[启动容器](#2-启动容器) |
+| 容器日志刷 `waiting for /config/config.json` | 没挂配置文件,也没通过 `CORPLINK_*` env 提供配置,请检查 `-v` 或环境变量 |
 | `TUN device: operation not permitted` | 没加 `--cap-add NET_ADMIN` 或 `--device /dev/net/tun` |
 | `curl -x socks5h://localhost:1080` 挂起 | corplink 没连上 VPN,先 `docker logs corplink` 看登录流程 |
 | 连上 VPN 但出口 IP 没变 | 检查 corplink 配置 `route_mode` / `vpn_disallowed_routes`,或看 `ip route` |

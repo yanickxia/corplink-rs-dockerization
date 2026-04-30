@@ -6,6 +6,13 @@ services:
     container_name: corplink
     hostname: corplink
     restart: unless-stopped
+    # corplink-rs requires pressing Enter after scanning the QR code on first
+    # login (platform=lark / bytedance_sso / ...). Keeping stdin + tty open
+    # lets `docker compose up` (or `docker attach corplink`) handle that
+    # interactively. Once the cookie is saved, you can drop these — but
+    # keeping them on is harmless.
+    stdin_open: true
+    tty: true
     environment:
       - TZ=Asia/Shanghai
       - GOST_SOCKS_PORT=1080
