@@ -151,6 +151,53 @@ docker run -d \
 | `GOST_USER` | *(空)* | 可选，代理用户名（设置后两个代理都会开启 basic auth） |
 | `GOST_PASS` | *(空)* | 可选,代理密码 |
 
+#### 通过环境变量配置 corplink-rs（可选）
+
+除了挂载 `config.json`,你也可以完全通过 `CORPLINK_*` 环境变量来配置。容器每次启动时会把这些变量**合并**进 `/config/config.json`：
+
+- 用户字段 (`company_name` / `username` / ... ) 如果 env 里设置了就覆盖
+- corplink-rs 运行时生成的字段 (`device_id` / `public_key` / `private_key` / `state` / `cookies.json`) 永远**保留**,不会被 env 清掉
+- 空字符串 (`-e FOO=`) 会被**忽略**,不会把已有字段改成空串
+- 字面量字符串 `"null"` 会被写成 JSON `null`
+- 数组字段用逗号分隔,例如 `10.68.0.0/16,192.168.1.0/24`
+- 多次启动是幂等的:配置没变化就不会重写文件
+
+支持的变量：
+
+| 变量 | JSON 字段 | 类型 |
+|---|---|---|
+| `CORPLINK_COMPANY_NAME` | `company_name` | string |
+| `CORPLINK_USERNAME` | `username` | string |
+| `CORPLINK_PASSWORD` | `password` | string |
+| `CORPLINK_PLATFORM` | `platform` | string (`ldap` / `feishu` / `oidc` / ...) |
+| `CORPLINK_CODE` | `code` | string (2FA/TOTP) |
+| `CORPLINK_SERVER` | `server` | string (URL) |
+| `CORPLINK_DEVICE_NAME` | `device_name` | string |
+| `CORPLINK_INTERFACE_NAME` | `interface_name` | string |
+| `CORPLINK_VPN_SERVER_NAME` | `vpn_server_name` | string |
+| `CORPLINK_VPN_SELECT_STRATEGY` | `vpn_select_strategy` | string |
+| `CORPLINK_ROUTE_MODE` | `route_mode` | string (`full` / `split`) |
+| `CORPLINK_DEBUG_WG` | `debug_wg` | bool (`true`/`false`/`1`/`0`/`yes`/`no`) |
+| `CORPLINK_USE_VPN_DNS` | `use_vpn_dns` | bool |
+| `CORPLINK_AUTO_SETUP_ROUTES` | `auto_setup_routes` | bool |
+| `CORPLINK_VPN_DISALLOWED_ROUTES` | `vpn_disallowed_routes` | CSV → string[] |
+
+示例(纯 env 配置,不挂 config.json 也行,容器第一次启动会自动创建):
+
+```bash
+docker run -d \
+  --name corplink \
+  --device /dev/net/tun --cap-add NET_ADMIN \
+  -v "$PWD/config:/config" \
+  -e CORPLINK_COMPANY_NAME=bytedance \
+  -e CORPLINK_USERNAME=alice \
+  -e CORPLINK_PLATFORM=ldap \
+  -e CORPLINK_ROUTE_MODE=full \
+  -e CORPLINK_VPN_DISALLOWED_ROUTES=10.68.0.0/16 \
+  -p 1080:1080 -p 8080:8080 \
+  ghcr.io/yanickxia/corplink-rs-dockerization:latest
+```
+
 ### 挂载点
 
 | 路径 | 说明 |

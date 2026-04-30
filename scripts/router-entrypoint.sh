@@ -15,6 +15,12 @@ for f in /proc/sys/net/ipv4/ip_forward /proc/sys/net/ipv6/conf/all/forwarding; d
     [ -w "$f" ] && echo 1 > "$f" 2>/dev/null || true
 done
 
+# Merge CORPLINK_* env vars into /config/config.json (preserves runtime-
+# generated fields like device_id/public_key/private_key/state).
+if [ -x /app/render-config.sh ]; then
+    /app/render-config.sh || echo "[entrypoint] warn: render-config.sh exited non-zero"
+fi
+
 while [ ! -e "$CONFFILE" ]; do
     echo "[entrypoint] waiting for $CONFFILE ..."
     sleep 5

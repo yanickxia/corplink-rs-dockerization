@@ -172,6 +172,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bind9-dnsutils \
         curl wget \
         procps \
+        jq \
         s6 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -185,8 +186,9 @@ ENV LD_LIBRARY_PATH=/app
 
 # s6 service definitions
 COPY s6/           /etc/s6/
-COPY scripts/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /etc/s6/corplink/run /etc/s6/gost/run
+COPY scripts/entrypoint.sh    /entrypoint.sh
+COPY scripts/render-config.sh /app/render-config.sh
+RUN chmod +x /entrypoint.sh /app/render-config.sh /etc/s6/corplink/run /etc/s6/gost/run
 
 WORKDIR /tmp
 

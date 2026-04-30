@@ -172,6 +172,7 @@ RUN apk add --no-cache \
         ca-certificates \
         gcompat libstdc++ \
         iproute2 iptables \
+        jq \
         tini
 
 COPY --from=corplink-builder /out/ /app/
@@ -180,7 +181,8 @@ COPY --from=gost-fetcher     /out/gost /app/gost
 ENV LD_LIBRARY_PATH=/app
 
 COPY scripts/router-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY scripts/render-config.sh     /app/render-config.sh
+RUN chmod +x /entrypoint.sh /app/render-config.sh
 
 WORKDIR /tmp
 

@@ -13,6 +13,27 @@ services:
       # Optional proxy auth (leave empty to allow anonymous access):
       # - GOST_USER=proxyuser
       # - GOST_PASS=proxypass
+      #
+      # --- Optional: configure corplink-rs entirely via env vars ---
+      # If set, these are merged into /config/config.json on every start
+      # (runtime-generated fields like device_id/public_key/private_key/
+      # state are preserved).  Empty values are ignored.  Use the string
+      # "null" to explicitly set a JSON null.
+      # - CORPLINK_COMPANY_NAME=bytedance
+      # - CORPLINK_USERNAME=alice
+      # - CORPLINK_PASSWORD=s3cret
+      # - CORPLINK_PLATFORM=ldap
+      # - CORPLINK_CODE=UXZV3X7252NOP2JW56HC32EFCXZBBKUK
+      # - CORPLINK_SERVER=https://sealsuite.bytedance.com:443
+      # - CORPLINK_DEVICE_NAME=DollarOS
+      # - CORPLINK_INTERFACE_NAME=corplink
+      # - CORPLINK_VPN_SERVER_NAME=SG-2
+      # - CORPLINK_VPN_SELECT_STRATEGY=latency
+      # - CORPLINK_ROUTE_MODE=full
+      # - CORPLINK_USE_VPN_DNS=true
+      # - CORPLINK_AUTO_SETUP_ROUTES=true
+      # - CORPLINK_DEBUG_WG=false
+      # - CORPLINK_VPN_DISALLOWED_ROUTES=10.68.0.0/16,192.168.1.0/24
     volumes:
       - ./config:/config
     tmpfs:
