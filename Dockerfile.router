@@ -27,13 +27,41 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG CORPLINK_REF=master
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates build-essential pkg-config \
-        clang llvm libclang-dev \
-        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-        gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
-        wget curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN <<'EOS'
+set -eux
+
+for f in /etc/apt/sources.list.d/debian.sources; do
+    [ -f "$f" ] && sed -i '/^Signed-By:/a Architectures: amd64' "$f"
+done
+
+cat > /etc/apt/sources.list.d/debian-cross.sources <<'EOF'
+Types: deb
+URIs: http://deb.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Architectures: arm64 armhf
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: http://deb.debian.org/debian-security
+Suites: bookworm-security
+Components: main
+Architectures: arm64 armhf
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+
+dpkg --add-architecture arm64
+dpkg --add-architecture armhf
+apt-get update
+apt-get install -y --no-install-recommends \
+    git ca-certificates build-essential pkg-config \
+    clang llvm libclang-dev \
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+    gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+    libssl-dev libssl-dev:arm64 libssl-dev:armhf \
+    wget curl
+rm -rf /var/lib/apt/lists/*
+EOS
 
 ARG GO_VERSION=1.22.5
 RUN set -eux; \
@@ -81,11 +109,23 @@ RUN set -eux; \
             export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc; \
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc; \
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/aarch64-linux-gnu"; \
+            export PKG_CONFIG_ALLOW_CROSS=1; \
+            export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig; \
+            export PKG_CONFIG_SYSROOT_DIR=/; \
+            export OPENSSL_DIR=/usr; \
+            export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu; \
+            export OPENSSL_INCLUDE_DIR=/usr/include/aarch64-linux-gnu; \
             ;; \
         arm) \
             export CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc; \
             export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc; \
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/arm-linux-gnueabihf"; \
+            export PKG_CONFIG_ALLOW_CROSS=1; \
+            export PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig; \
+            export PKG_CONFIG_SYSROOT_DIR=/; \
+            export OPENSSL_DIR=/usr; \
+            export OPENSSL_LIB_DIR=/usr/lib/arm-linux-gnueabihf; \
+            export OPENSSL_INCLUDE_DIR=/usr/include/arm-linux-gnueabihf; \
             ;; \
     esac; \
     cargo build --release --target "$RUST_TARGET"; \

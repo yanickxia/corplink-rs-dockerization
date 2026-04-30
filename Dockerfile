@@ -21,13 +21,51 @@ ARG TARGETPLATFORM
 ARG TARGETARCH
 ARG CORPLINK_REF=master
 
-# Install cross-compilation toolchain + Go (needed for libwg)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates build-essential pkg-config \
-        clang llvm libclang-dev \
-        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-        wget curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install cross-compilation toolchain + Go (needed for libwg).
+#
+# reqwest (pulled in by corplink-rs) defaults to native-tls -> openssl-sys,
+# which during cross-compile to arm64 needs the arm64 libssl-dev.  Enable
+# multi-arch apt and install target libs + set PKG_CONFIG_* for cargo.
+# Install cross-compilation toolchain + Go (needed for libwg).
+#
+# reqwest (pulled in by corplink-rs) defaults to native-tls -> openssl-sys,
+# which during cross-compile to arm64 needs the arm64 libssl-dev. Enable
+# multi-arch apt and install target libs + set PKG_CONFIG_* for cargo.
+RUN <<'EOS'
+set -eux
+
+# Make the default deb822 source amd64-only so arm64 packages don't clobber.
+for f in /etc/apt/sources.list.d/debian.sources; do
+    [ -f "$f" ] && sed -i '/^Signed-By:/a Architectures: amd64' "$f"
+done
+
+# Add arm64 sources
+cat > /etc/apt/sources.list.d/debian-arm64.sources <<'EOF'
+Types: deb
+URIs: http://deb.debian.org/debian
+Suites: bookworm bookworm-updates
+Components: main
+Architectures: arm64
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: http://deb.debian.org/debian-security
+Suites: bookworm-security
+Components: main
+Architectures: arm64
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+
+dpkg --add-architecture arm64
+apt-get update
+apt-get install -y --no-install-recommends \
+    git ca-certificates build-essential pkg-config \
+    clang llvm libclang-dev \
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+    libssl-dev libssl-dev:arm64 \
+    wget curl
+rm -rf /var/lib/apt/lists/*
+EOS
 
 # Install Go (libwg requires go)
 ARG GO_VERSION=1.22.5
@@ -80,6 +118,13 @@ RUN set -eux; \
             export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc; \
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc; \
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/aarch64-linux-gnu"; \
+            # Tell openssl-sys / pkg-config to locate the arm64 libs
+            export PKG_CONFIG_ALLOW_CROSS=1; \
+            export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig; \
+            export PKG_CONFIG_SYSROOT_DIR=/; \
+            export OPENSSL_DIR=/usr; \
+            export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu; \
+            export OPENSSL_INCLUDE_DIR=/usr/include/aarch64-linux-gnu; \
             ;; \
     esac; \
     cargo build --release --target "$RUST_TARGET"; \
