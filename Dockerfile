@@ -130,7 +130,10 @@ RUN set -eux; \
     cargo build --release --target "$RUST_TARGET"; \
     mkdir -p /out; \
     cp "target/${RUST_TARGET}/release/corplink-rs" /out/corplink-rs; \
-    cp libwg/libwg.so /out/libwg.so
+    # libwg produces libwg.so / libwg.a / libwg.so.<ver>; copy all variants
+    find libwg -maxdepth 1 -name 'libwg*.so*' -exec cp -v {} /out/ \; || true; \
+    find libwg -maxdepth 1 -name 'libwg*.a'   -exec cp -v {} /out/ \; || true; \
+    ls -la /out
 
 # -----------------------------------------------------------------------------
 # Stage 2: fetch gost binary for the target arch
@@ -173,9 +176,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Binaries produced by previous stages
-COPY --from=corplink-builder /out/corplink-rs /app/corplink-rs
-COPY --from=corplink-builder /out/libwg.so    /app/libwg.so
-COPY --from=gost-fetcher     /out/gost        /app/gost
+COPY --from=corplink-builder /out/ /app/
+COPY --from=gost-fetcher     /out/gost /app/gost
 
 # libwg.so is linked with rpath=$ORIGIN, so placing it next to corplink-rs
 # works. For safety, also expose it via LD_LIBRARY_PATH.

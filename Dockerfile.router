@@ -131,7 +131,9 @@ RUN set -eux; \
     cargo build --release --target "$RUST_TARGET"; \
     mkdir -p /out; \
     cp "target/${RUST_TARGET}/release/corplink-rs" /out/corplink-rs; \
-    cp libwg/libwg.so /out/libwg.so
+    find libwg -maxdepth 1 -name 'libwg*.so*' -exec cp -v {} /out/ \; || true; \
+    find libwg -maxdepth 1 -name 'libwg*.a'   -exec cp -v {} /out/ \; || true; \
+    ls -la /out
 
 # -----------------------------------------------------------------------------
 # Stage 2: gost binary
@@ -172,9 +174,8 @@ RUN apk add --no-cache \
         iproute2 iptables \
         tini
 
-COPY --from=corplink-builder /out/corplink-rs /app/corplink-rs
-COPY --from=corplink-builder /out/libwg.so    /app/libwg.so
-COPY --from=gost-fetcher     /out/gost        /app/gost
+COPY --from=corplink-builder /out/ /app/
+COPY --from=gost-fetcher     /out/gost /app/gost
 
 ENV LD_LIBRARY_PATH=/app
 
